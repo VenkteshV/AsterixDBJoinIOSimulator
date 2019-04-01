@@ -1,4 +1,5 @@
 from ExperimentAggFunctions import *
+import os
 import matplotlib
 matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
@@ -8,18 +9,35 @@ class Plot:
         self.runs = kwargs['runs']
         self.phase = kwargs['phase']
         self.outFolder = kwargs['outFolder']
+        self.outFile = kwargs['outFile']
         self.xlabel = kwargs['xlabel']
+        self.ylabel = kwargs['ylabel']
         # self.numPartitions = kwargs['numPartitions']
         self.metric_fn = kwargs['metric_fn']
         self.groupBy_fn = kwargs['groupBy_fn']
         self.select_fn = kwargs['select_fn']
+        self.lineLabel_fn = kwargs['lineLabel_fn']
+
         # self.xticks = self.x
         # if 'xticks' in kwargs:
         #     self.xticks = kwargs['xticks']
 
+    def fixYvalues(self, ys):
+        return [1 + y for y in ys]
+
     def plot(self):
+        # Create folders
+        try:
+            os.makedirs(self.outFolder, exist_ok = True)
+        except OSError:
+            print('Error creating output folder %s' % (self.outFolder))
+
         groups = ExperimentAggFunctions.groupBy(self.runs, self.groupBy_fn)
         S = ExperimentAggFunctions.select(groups, self.select_fn)
+
+        plt.figure(figsize = (12, 10))
+        plt.yscale('log')
+        plt.xscale('log')
 
         for g, runs in groups.items():
             ys = []
@@ -31,6 +49,8 @@ class Plot:
                 else:
                     s = r.join.stats()
                 ys.append(self.metric_fn(s))
-
-            plt.step(S[g], ys)
-        plt.savefig('test.png')
+            plt.step(S[g], self.fixYvalues(ys), label = self.lineLabel_fn(g), marker = 'x')
+        plt.ylabel(self.ylabel)
+        plt.xlabel(self.xlabel)
+        plt.legend()
+        plt.savefig(self.outFolder + '/' + self.outFile)
