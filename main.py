@@ -2,7 +2,7 @@ import math
 from Join import *
 from Experiment import *
 from ExperimentAggFunctions import *
-from Plot import *Ω≈
+from Plot import *
 
 buildSizes = [128, 256]
 probeSizes = [128, 256]
@@ -14,8 +14,15 @@ E = Experiment(buildSizes, probeSizes, memSizes, F, numPartitions)
 E.run()
 
 for r in E.runs:
-    print(r.join.stats())
+    print(r.config, r.join.stats())
 
-groups = ExperimentAggFunctions.groupBy(E.runs, lambda c: c.numPartitions)
-print(groups)
-print(ExperimentAggFunctions.select(groups, lambda c: c.buildSize / c.memSize))
+for m in Stats.getAttrNames():
+    for ph in ['build', 'probe', 'total']:
+        P = Plot(runs = E.runs,
+                 phase = ph,
+                 outFolder = 'plots',
+                 xlabel = 'Xs',
+                 metric_fn = lambda s: getattr(s, m),
+                 groupBy_fn = lambda c: (c.buildSize, c.memSize),
+                 select_fn = lambda c: c.numPartitions)
+        P.plot()
