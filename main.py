@@ -1,6 +1,7 @@
 import math
 from Join import *
 from Experiment import *
+from ExperimentAggFunctions import *
 
 buildSizes = [128, 256]
 probeSizes = [128, 256]
@@ -13,3 +14,7 @@ E.run()
 
 for r in E.runs:
     print(r.join.stats())
+
+groups = ExperimentAggFunctions.groupBy(E.runs, lambda c: c.numPartitions)
+print(groups)
+print(ExperimentAggFunctions.select(groups, lambda c: c.buildSize / c.memSize))
