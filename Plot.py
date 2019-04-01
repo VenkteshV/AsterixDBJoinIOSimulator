@@ -38,6 +38,7 @@ class Plot:
         plt.figure(figsize = (12, 10))
         plt.yscale('log')
         plt.xscale('log')
+        plt.grid()
 
         for g, runs in groups.items():
             ys = []
