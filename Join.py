@@ -1,4 +1,5 @@
 import math
+from Config import *
 
 class Join:
     def __init__(self, config):
