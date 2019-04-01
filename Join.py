@@ -1,13 +1,14 @@
 import math
 
 class Join:
-    def __init__(self, build_size, probe_size, mem, F, numOfPartitions): # config
-        self.numOfPartitions = numOfPartitions
-        self.F = F
-        self.build = Build(build_size, mem, self)
-        self.probe = Probe(probe_size, self)
-        self.mem = mem
-        self.spilledStatus = [False] * numOfPartitions
+    def __init__(self, config):
+        self.config = config
+        self.numOfPartitions = config.numPartitions
+        self.F = config.F
+        self.build = Build(config.buildSize, config.memSize, self)
+        self.probe = Probe(config.probeSize, self)
+        self.mem = config.memSize
+        self.spilledStatus = [False] * config.numPartitions
         self.freeMem = self.mem
 
     def stats(self):
@@ -35,6 +36,9 @@ class Join:
         self.build.close()
         self.probe.init()
         self.probe.run()
+
+
+from Experiment import Config
 
 class Build:
     def __init__(self, size, mem, join):
@@ -112,27 +116,49 @@ class Probe:
     def run(self):
         for i in range(self.parentJoin.numOfPartitions):
             if self.parentJoin.isSpilled(i):
-                nextJoin = Join(self.parentJoin.build.partitions[i].size,
-                                self.partitions[i].size,
-                                self.parentJoin.mem,
-                                self.parentJoin.F,
-                                self.parentJoin.numOfPartitions)
+                c = Config(self.parentJoin.build.partitions[i].size,
+                           self.partitions[i].size,
+                           self.parentJoin.mem,
+                           self.parentJoin.F,
+                           self.parentJoin.numOfPartitions)
+                nextJoin = Join(c)
                 self.joins.append(nextJoin)
                 nextJoin.run()
 
 
 class Stats:
+    seekTime = 1
+    transferTime = 1
+
     def __init__(self, RW = 0, SW = 0, seqR = 0, seeks = 0):
         self.RW = RW
         self.SW = SW
         self.seqR = seqR
         self.seeks = seeks
 
+    @property
+    def totalIO(self):
+        return self.RW + self.SW + self.seqR
+
+    @property
+    def totalTimeHDD(self):
+        return self.seeks * Stats.seekTime + self.totalIO * Stats.transferTime
+
+    @property
+    def totalW(self):
+        return self.RW + self.SW
+
+    @staticmethod
+    def getAttrNames():
+        return ['RW', 'SW', 'seqR', 'totalIO', 'totalTimeHDD', 'totalW']
+
+
     def __add__(self, other):
         return Stats(self.RW + other.RW, self.SW + other.SW, self.seqR + other.seqR, self.seeks + other.seeks)
 
     def __str__(self):
-        return " SW(pages): " + str(self.SW) + " RW: " + str(self.RW) + " seqR: " + str(self.seqR) + " seeks: " + str(self.seeks)
+        return (" SW(pages): %d\tRW: %d\tseqR: %d\tseeks: %d\ttotalTimeHDD(ms): %f\ttotalIO: %d\ttotalW: %d"
+                % (self.RW, self.SW, self.seqR, self.seeks, self.totalTimeHDD, self.totalIO, self.totalW))
 
 class Partition:
     def __init__(self, pid, mem, size, stats = Stats()):

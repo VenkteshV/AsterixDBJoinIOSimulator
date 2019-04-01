@@ -1,12 +1,15 @@
 import math
 from Join import *
+from Experiment import *
 
-build_size = math.ceil(1.5 * 256)
-probe_size = 0
-mem = 256
+buildSizes = [128, 256]
+probeSizes = [128, 256]
+memSizes = [255, 256]
 F = 1.3
-partitions = 2
+numPartitions = [2, 3, 4]
 
-J = Join(build_size, probe_size, mem, F, partitions)
-J.run()
-print(J.stats())
+E = Experiment(buildSizes, probeSizes, memSizes, F, numPartitions)
+E.run()
+
+for r in E.runs:
+    print(r.join.stats())
