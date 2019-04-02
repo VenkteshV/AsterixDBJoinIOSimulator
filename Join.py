@@ -1,16 +1,25 @@
 import math
 from Config import *
 
+
+def MBToFrames(mb):
+    return mb * 1024 * 1024 / 32768
+
+def FramesToMB(f):
+    return f * 32768 / 1024 / 1024
+
+
 class Join:
-    def __init__(self, config):
+    def __init__(self, config, id = 0):
         self.config = config
         self.numOfPartitions = config.numPartitions
         self.F = config.F
-        self.build = Build(config.buildSize, config.memSize, self)
-        self.probe = Probe(config.probeSize, self)
+        self.build = None
+        self.probe = None
         self.mem = config.memSize
         self.spilledStatus = [False] * config.numPartitions
         self.freeMem = self.mem
+        self.id = id
 
     def stats(self):
         return self.build.stats() + self.probe.stats()
@@ -32,14 +41,23 @@ class Join:
         self.freeMem = self.mem - self.build.memoryUsed() - extra
         return self.freeMem
 
+    def getRecursionDepth(self):
+        if (len(self.probe.joins) == 0):
+            return 0
+        return max(j.getRecursionDepth() for j in self.probe.joins) + 1
+
     def run(self):
+        self.build = Build(self.config.buildSize, self.mem, self)
         self.build.run()
         self.build.close()
+        self.probe = Probe(self.config.probeSize, self)
         self.probe.init()
         self.probe.run()
 
+    def __str__(self):
+        return "\"Join\" : partitions: %s, numPartitions_spilled: %s, buildSize: %s, probeSize: %s, mem: %s, freeMem: %s" %(self.numOfPartitions, self.spilledPartitions() ,self.config.buildSize, self.config.probeSize, self.mem, self.freeMem)
 
-from Experiment import Config
+
 
 class Build:
     def __init__(self, size, mem, join):
@@ -60,6 +78,9 @@ class Build:
             memForpartitionI = math.floor((self.mem - self.join.spilledPartitions())
                                           / (self.join.numOfPartitions - self.join.spilledPartitions()))
             p = Partition(i, memForpartitionI, data_size)
+            # Reading of base relations should not be counted. Only intermediate results.
+            if self.join.id != 0:
+               p.doSR(data_size)
             if memForpartitionI < data_size :
                 self.join.spill(p.pid)
                 p.doSW(memForpartitionI)
@@ -70,7 +91,13 @@ class Build:
             self.addPartition(p)
 
     def memoryUsed(self):
-        return sum([p.inMem for p in self.partitions])
+       size = 0
+       for i in range(len(self.join.spilledStatus)):
+           if not self.join.spilledStatus[i]:
+               size += self.partitions[i].size
+
+       return size
+
 
     def close(self):
         # for now just bring back partitions to memory
@@ -80,7 +107,7 @@ class Build:
         freeMem = self.join.updateFreeMem()
         for p in self.partitions:
             if p.inMem == 0 and p.size < freeMem:
-                p.doSR()
+                p.doSR(p.size)
                 freeMem -= p.size
                 self.join.unspill(p.pid)
             else:
@@ -99,20 +126,25 @@ class Probe:
               + sum([j.stats() for j in self.joins], Stats()))
 
     def init(self):
+        dataSizeForEachPartition = math.floor(self.size / self.parentJoin.numOfPartitions)
         for i in range(self.parentJoin.numOfPartitions):
             if not self.parentJoin.isSpilled(i):
                 self.partitions.append(Partition(i, 0, 0))
             else:
                 self.partitions.append(Partition(i, math.floor(self.parentJoin.freeMem / self.parentJoin.spilledPartitions()),
-                                                    math.floor(self.size / self.parentJoin.numOfPartitions)))
+                                                 dataSizeForEachPartition))
                 partition = self.partitions[i]
                 size = partition.size
-                while size - partition.mem > 0:
+                if size - partition.mem > 0:
                     self.partitions[i].doSW(partition.mem)
                     size -= partition.mem
                 if size > 0:
                     self.partitions[i].doRW(size)
-                self.partitions[i].size = size
+            # counting the seqR for reading intermediate results in
+            partition = self.partitions[i]
+            if self.parentJoin.id != 0:
+                partition.doSR(dataSizeForEachPartition)
+
 
     def run(self):
         for i in range(self.parentJoin.numOfPartitions):
@@ -122,14 +154,26 @@ class Probe:
                            self.parentJoin.mem,
                            self.parentJoin.F,
                            self.parentJoin.numOfPartitions)
-                nextJoin = Join(c)
+                nextJoin = Join(c, self.parentJoin.id+1)
                 self.joins.append(nextJoin)
                 nextJoin.run()
 
 
+
+    def __str__(self):
+        return "\"Probe\" : partitions: %s, data_size: %s" %(self.partitions, self.size)
+
+
 class Stats:
-    seekTime = 1
-    transferTime = 1
+    seekTime_HDD = 12 #ms
+    rotational_HDD = 4.17 #ms
+    transferRate_HDD = 0.6 #MB/ms
+
+    seqR_SSD = 3 # MB/ms
+    seqW_SSD = 1.15 #MB/ms
+    randomR_SSD = 360 #iopms
+    randomW_SSD = 280 #iopms
+
 
     def __init__(self, RW = 0, SW = 0, seqR = 0, seeks = 0):
         self.RW = RW
@@ -143,7 +187,11 @@ class Stats:
 
     @property
     def totalTimeHDD(self):
-        return self.seeks * Stats.seekTime + self.totalIO * Stats.transferTime
+        return self.seeks * (Stats.seekTime_HDD + 0.5 * Stats.rotational_HDD) + (self.totalIO / Stats.transferRate_HDD)
+
+    @property
+    def totalTimeSSD(self):
+        return (self.seqR / Stats.seqR_SSD) + (self.SW / Stats.seqW_SSD) + (self.RW / Stats.randomW_SSD)
 
     @property
     def totalW(self):
@@ -151,23 +199,23 @@ class Stats:
 
     @staticmethod
     def getAttrNames():
-        return ['RW', 'SW', 'seqR', 'totalIO', 'totalTimeHDD', 'totalW']
+        return ['RW', 'SW', 'seqR', 'totalIO', 'totalTimeHDD','totalTimeSSD', 'totalW']
 
 
     def __add__(self, other):
         return Stats(self.RW + other.RW, self.SW + other.SW, self.seqR + other.seqR, self.seeks + other.seeks)
 
     def __str__(self):
-        return (" SW(pages): %d\tRW: %d\tseqR: %d\tseeks: %d\ttotalTimeHDD(ms): %f\ttotalIO: %d\ttotalW: %d"
-                % (self.RW, self.SW, self.seqR, self.seeks, self.totalTimeHDD, self.totalIO, self.totalW))
+        return (" SW(pages): %d\tRW: %d\tseqR: %d\tseeks: %d\ttotalTimeHDD(ms): %f \ttotalTimeHDD(ms): %f\ttotalIO: %d\ttotalW: %d"
+                % (self.SW, self.RW, self.seqR, self.seeks, self.totalTimeHDD,self.totalTimeSSD, self.totalIO, self.totalW))
 
 class Partition:
-    def __init__(self, pid, mem, size, stats = Stats()):
+    def __init__(self, pid, mem, size):
         self.pid = pid
         self.mem = mem
         self.size = size
         self.inMem = 0
-        self.stats_ = stats
+        self.stats_ = Stats()
 
     def stats(self):
         return self.stats_
@@ -180,11 +228,11 @@ class Partition:
         self.stats_.SW += int(SW)
         self.stats_.seeks += 1
 
-    def doSR(self):
-        self.stats_.seqR += self.size
-        self.stats_.inMem = self.size
+    def doSR(self,seqR): #for reading a whole partition in during build close
+        self.stats_.seqR += int(seqR)
         self.stats_.seeks += 1
 
     def __str__(self):
-        return ("pid: " + str(self.pid) + " size: " + str(self.size) + " mem: " + str(self.mem) + " SW(pages): "
-                + "stats: \"" + str(self.stats_) + "\" inMem: " + str(self.inMem))
+        return ("pid: " + str(self.pid) + " size: " + str(self.size) + " mem: " + str(self.mem)
+                + " stats: \"" + str(self.stats_))
+        

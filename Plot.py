@@ -12,15 +12,12 @@ class Plot:
         self.outFile = kwargs['outFile']
         self.xlabel = kwargs['xlabel']
         self.ylabel = kwargs['ylabel']
-        # self.numPartitions = kwargs['numPartitions']
         self.metric_fn = kwargs['metric_fn']
         self.groupBy_fn = kwargs['groupBy_fn']
         self.select_fn = kwargs['select_fn']
         self.lineLabel_fn = kwargs['lineLabel_fn']
-
-        # self.xticks = self.x
-        # if 'xticks' in kwargs:
-        #     self.xticks = kwargs['xticks']
+        self.xlog = kwargs['xlog']
+        self.ylog = kwargs['ylog']
 
     def fixYvalues(self, ys):
         return [1 + y for y in ys]
@@ -36,10 +33,15 @@ class Plot:
         S = ExperimentAggFunctions.select(groups, self.select_fn)
 
         plt.figure(figsize = (12, 10))
-        plt.yscale('log')
-        plt.xscale('log')
+        if self.ylog:
+            plt.yscale('log')
+            self.ylabel += "(log)"
+        if self.xlog:
+            plt.xscale('log')
+            self.xlabel += "log"
         plt.grid()
-
+        allYs =[]
+#        xticks=[]
         for g, runs in groups.items():
             ys = []
             for r in runs:
@@ -50,8 +52,16 @@ class Plot:
                 else:
                     s = r.join.stats()
                 ys.append(self.metric_fn(s))
-            plt.step(S[g], self.fixYvalues(ys), label = self.lineLabel_fn(g), marker = 'x')
+            allYs += self.fixYvalues(ys)
+            xticks = [0]+S[g]
+            #plt.step(S[g], self.fixYvalues(ys), label = self.lineLabel_fn(g), marker = 'x', where="post")
+            plt.plot(S[g], self.fixYvalues(ys), label=self.lineLabel_fn(g))
+
         plt.ylabel(self.ylabel)
         plt.xlabel(self.xlabel)
+        #plt.yticks(allYs, allYs)
+        plt.xlim(0)
+        #plt.xticks(xticks,xticks)
         plt.legend()
         plt.savefig(self.outFolder + '/' + self.outFile)
+        plt.close()
