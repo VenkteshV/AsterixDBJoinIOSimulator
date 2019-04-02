@@ -60,7 +60,7 @@ class Join:
         self.stats().recursionDepth = self.probe.stats().recursionDepth
 
     def __str__(self):
-        return "\"Join\" : id %s, partitions: %s, numPartitions_spilled: %s, buildSize: %s, probeSize: %s, mem: %s, freeMem: %s" %(self.id,self.numOfPartitions, self.spilledPartitions() ,self.config.buildSize, self.config.probeSize, self.mem, self.freeMem)
+        return "\"Join\" : id %s, partitions: %s, numPartitions_spilled: %s, buildSize(MB): %s, buildSize(frames): %s, probeSize(MB): %s, probeSize(frames): %s, mem(MB): %s, mem(frames): %s,freeMem(MB): %s ,freeMem(frames): %s" %(self.id, self.numOfPartitions, self.spilledPartitions() ,FramesToMB(self.config.buildSize), self.config.buildSize, FramesToMB(self.config.probeSize),self.config.probeSize, FramesToMB(self.mem), self.mem, FramesToMB(self.freeMem), self.freeMem)
 
 
 
@@ -221,14 +221,14 @@ class Stats:
                      self.recursionDepth)
 
     def __str__(self):
-        return (" SW(pages): %d\tRW: %d\tseqR: %d\tseeks: %d\ttotalTimeHDD(ms): %f \ttotalTimeHDD(ms): %f\ttotalIO: %d\ttotalW: %d\trecursionDepth: %d"
-                % (self.SW, self.RW, self.seqR, self.seeks, self.totalTimeHDD,self.totalTimeSSD, self.totalIO, self.totalW, self.recursionDepth))
+        return (" SW(MB): %d\t SW(frames): %d\tRW(MB): %d\t RW(frames): %d\tseqR(MB): %d\t seqR(frames): %d\tseeks: %d\ttotalTimeHDD(ms): %f \ttotalTimeHDD(ms): %f\ttotalIO(MB): %d\t totalIO(frames): %d\ttotalW(MB): %d\t totalW(frames): %d\t recursionDepth: %d"
+                % (self.SW, MBToFrames(self.SW), self.RW, MBToFrames(self.RW), self.seqR, MBToFrames(self.seqR),self.seeks, self.totalTimeHDD,self.totalTimeSSD, self.totalIO, MBToFrames(self.totalIO),self.totalW,MBToFrames(self.totalW), self.recursionDepth))
 
 class Partition:
     def __init__(self, pid, mem, size):
         self.pid = pid
-        self.mem = mem
-        self.size = size
+        self.mem = FramesToMB(mem)
+        self.size = FramesToMB(size)
         self.inMem = 0
         self.stats_ = Stats()
 
@@ -236,18 +236,18 @@ class Partition:
         return self.stats_
 
     def doRW(self, RW):  # randomwrite
-        self.stats_.RW += int(RW)
+        self.stats_.RW += FramesToMB(int(RW))
         self.stats_.seeks += int(RW)
 
     def doSW(self, SW):
-        self.stats_.SW += int(SW)
+        self.stats_.SW += FramesToMB(int(SW))
         self.stats_.seeks += 1
 
     def doSR(self,seqR): #for reading a whole partition in during build close
-        self.stats_.seqR += int(seqR)
+        self.stats_.seqR += FramesToMB(int(seqR))
         self.stats_.seeks += 1
 
     def __str__(self):
-        return ("pid: " + str(self.pid) + " size: " + str(self.size) + " mem: " + str(self.mem)
-                + " stats: \"" + str(self.stats_))
+        return ("pid: " + str(self.pid) + " size(MB): " + str(self.size) + " size(frames): "+str(MBToFrames(self.size))+" mem(MB): " + str(self.mem)
+                +" mem(frames): " +str(MBToFrames(self.mem))+" stats: \"" + str(self.stats_))
         

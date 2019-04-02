@@ -17,7 +17,7 @@ class Experiment:
         for bs, ps in zip(self.buildSizes, self.probeSizes):
             for m in self.memSizes:
                 for p in self.numPartitions:
-                    yield Config(bs, ps, m, self.F, p)
+                    yield Config(MBToFrames(bs), MBToFrames(ps), MBToFrames(m), self.F, p)
 
     def run(self):
         assert not self.done
