@@ -41,7 +41,7 @@ class Plot:
             self.xlabel += "log"
         plt.grid()
         allYs =[]
-#        xticks=[]
+        xticks=[]
         for g, runs in groups.items():
             ys = []
             for r in runs:

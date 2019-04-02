@@ -20,9 +20,12 @@ class Join:
         self.spilledStatus = [False] * config.numPartitions
         self.freeMem = self.mem
         self.id = id
+        self.stats_ = None
 
     def stats(self):
-        return self.build.stats() + self.probe.stats()
+        if self.stats_ is None:
+            self.stats_ = self.build.stats() + self.probe.stats()
+        return self.stats_
 
     def spilledPartitions(self):
         return sum(self.spilledStatus)
@@ -53,9 +56,11 @@ class Join:
         self.probe = Probe(self.config.probeSize, self)
         self.probe.init()
         self.probe.run()
+        self.build.stats().recursionDepth = self.probe.stats().recursionDepth
+        self.stats().recursionDepth = self.probe.stats().recursionDepth
 
     def __str__(self):
-        return "\"Join\" : partitions: %s, numPartitions_spilled: %s, buildSize: %s, probeSize: %s, mem: %s, freeMem: %s" %(self.numOfPartitions, self.spilledPartitions() ,self.config.buildSize, self.config.probeSize, self.mem, self.freeMem)
+        return "\"Join\" : id %s, partitions: %s, numPartitions_spilled: %s, buildSize: %s, probeSize: %s, mem: %s, freeMem: %s" %(self.id,self.numOfPartitions, self.spilledPartitions() ,self.config.buildSize, self.config.probeSize, self.mem, self.freeMem)
 
 
 
@@ -65,9 +70,12 @@ class Build:
         self.size = size
         self.mem = mem
         self.join = join
+        self.stats_ = None
 
     def stats(self):
-        return sum([p.stats() for p in self.partitions], Stats())
+        if self.stats_ is None:
+            self.stats_ = sum([p.stats() for p in self.partitions], Stats())
+        return self.stats_
 
     def addPartition(self, p):
         self.partitions.append(p)
@@ -79,8 +87,8 @@ class Build:
                                           / (self.join.numOfPartitions - self.join.spilledPartitions()))
             p = Partition(i, memForpartitionI, data_size)
             # Reading of base relations should not be counted. Only intermediate results.
-            if self.join.id != 0:
-               p.doSR(data_size)
+            # if self.join.id != 0:
+            #    p.doSR(data_size)
             if memForpartitionI < data_size :
                 self.join.spill(p.pid)
                 p.doSW(memForpartitionI)
@@ -120,10 +128,15 @@ class Probe:
         self.joins = []
         self.parentJoin = parentJoin
         self.size = size
+        self.stats_ = None
 
     def stats(self):
-        return (sum([p.stats() for p in self.partitions], Stats())
-              + sum([j.stats() for j in self.joins], Stats()))
+        if self.stats_ is None:
+            max_recursionDepth = 0 if len(self.joins) == 0 else max(j.stats().recursionDepth for j in self.joins) +1
+            self.stats_ = (sum([p.stats() for p in self.partitions], Stats())
+                        + sum([j.stats() for j in self.joins], Stats()))
+            self.stats_.recursionDepth = max_recursionDepth
+        return self.stats_
 
     def init(self):
         dataSizeForEachPartition = math.floor(self.size / self.parentJoin.numOfPartitions)
@@ -142,8 +155,8 @@ class Probe:
                     self.partitions[i].doRW(size)
             # counting the seqR for reading intermediate results in
             partition = self.partitions[i]
-            if self.parentJoin.id != 0:
-                partition.doSR(dataSizeForEachPartition)
+            # if self.parentJoin.id != 0:
+            #     partition.doSR(dataSizeForEachPartition)
 
 
     def run(self):
@@ -175,11 +188,12 @@ class Stats:
     randomW_SSD = 280 #iopms
 
 
-    def __init__(self, RW = 0, SW = 0, seqR = 0, seeks = 0):
+    def __init__(self, RW = 0, SW = 0, seqR = 0, seeks = 0, recursionDepth = 0):
         self.RW = RW
         self.SW = SW
         self.seqR = seqR
         self.seeks = seeks
+        self.recursionDepth = recursionDepth
 
     @property
     def totalIO(self):
@@ -199,15 +213,16 @@ class Stats:
 
     @staticmethod
     def getAttrNames():
-        return ['RW', 'SW', 'seqR', 'totalIO', 'totalTimeHDD','totalTimeSSD', 'totalW']
+        return ['RW', 'SW', 'seqR', 'totalIO', 'totalTimeHDD','totalTimeSSD', 'totalW', 'recursionDepth']
 
 
     def __add__(self, other):
-        return Stats(self.RW + other.RW, self.SW + other.SW, self.seqR + other.seqR, self.seeks + other.seeks)
+        return Stats(self.RW + other.RW, self.SW + other.SW, self.seqR + other.seqR, self.seeks + other.seeks,
+                     self.recursionDepth)
 
     def __str__(self):
-        return (" SW(pages): %d\tRW: %d\tseqR: %d\tseeks: %d\ttotalTimeHDD(ms): %f \ttotalTimeHDD(ms): %f\ttotalIO: %d\ttotalW: %d"
-                % (self.SW, self.RW, self.seqR, self.seeks, self.totalTimeHDD,self.totalTimeSSD, self.totalIO, self.totalW))
+        return (" SW(pages): %d\tRW: %d\tseqR: %d\tseeks: %d\ttotalTimeHDD(ms): %f \ttotalTimeHDD(ms): %f\ttotalIO: %d\ttotalW: %d\trecursionDepth: %d"
+                % (self.SW, self.RW, self.seqR, self.seeks, self.totalTimeHDD,self.totalTimeSSD, self.totalIO, self.totalW, self.recursionDepth))
 
 class Partition:
     def __init__(self, pid, mem, size):
