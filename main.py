@@ -48,11 +48,12 @@ with open(configFile) as json_file:
     buildDone = False
     for ph in ['build', 'probe', 'total']:
         for m in Stats.getAttrNames():
+            #m = "recursionDepth"
             P = Plot(runs = E.runs,
                      phase = ph,
                      outFolder = folderName+ '/' + ph,
                      outFile = ph + '_' + m + '.png',
-                     ylabel =  "Time (ms)" if (m=="totalTimeSSD" or m=="totalTimeHDD") else "I/O (MB)",
+                     ylabel =  "Time (ms)" if (m=="totalTimeSSD" or m=="totalTimeHDD") else "I/O (Frames)",
                      xlabel = xLabel,
                      xlog = xlog,
                      ylog  = ylog if m != "recursionDepth" else False,

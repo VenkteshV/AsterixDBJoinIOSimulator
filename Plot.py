@@ -52,16 +52,18 @@ class Plot:
                 else:
                     s = r.join.stats()
                 ys.append(self.metric_fn(s))
-            allYs += self.fixYvalues(ys)
+            if self.ylog:
+                ys = self.fixYvalues(ys)
+            allYs += ys
             xticks = [0]+S[g]
             #plt.step(S[g], self.fixYvalues(ys), label = self.lineLabel_fn(g), marker = 'x', where="post")
-            plt.plot(S[g], self.fixYvalues(ys), label=self.lineLabel_fn(g),alpha=0.6)
+            plt.plot(S[g], ys, label=self.lineLabel_fn(g),alpha=0.6)
 
         plt.ylabel(self.ylabel)
         plt.xlabel(self.xlabel)
         #plt.yticks(allYs, allYs)
         plt.xlim(0)
-        plt.xticks(xticks,xticks)
+        #plt.xticks(xticks,xticks)
         plt.legend()
         plt.savefig(self.outFolder + '/' + self.outFile)
         plt.close()

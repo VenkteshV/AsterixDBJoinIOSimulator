@@ -98,8 +98,6 @@ class Build:
 
                 #writes to disk
                 if memForpartition < data_size :
-                    if self.join.numOfPartitions == 43:
-                        print ()
                     self.join.spill(p.pid)
                     p.doSW(memForpartition)
                     if data_size - memForpartition > 0:
@@ -124,7 +122,7 @@ class Build:
     def bringPartitionsBackinIfPossible(self):
         freeMem = self.join.updateFreeMem()
         for p in self.partitions:
-            if p.inMem == 0 and p.size < freeMem:
+            if self.join.spilledStatus[p.pid] and p.inMem == 0 and p.size < freeMem:
                 p.doSR(p.size)
                 freeMem -= p.size
                 self.join.unspill(p.pid)
@@ -150,7 +148,7 @@ class Probe:
 
     def init(self):
         dataSizeForEachPartition = math.ceil(self.size / self.parentJoin.numOfPartitions)
-        memForEachPartition = 0 if self.parentJoin.spilledPartitions() == 0 else math.floor(self.parentJoin.freeMem / self.parentJoin.spilledPartitions())
+        memForEachPartition = 1 if self.parentJoin.spilledPartitions() == 0 else 1+ math.floor(self.parentJoin.freeMem / self.parentJoin.spilledPartitions())
         totalSize = self.size
         for i in range(self.parentJoin.numOfPartitions):
             if totalSize == 0 or not self.parentJoin.isSpilled(i):
