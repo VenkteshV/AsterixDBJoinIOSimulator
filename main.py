@@ -55,7 +55,7 @@ with open(configFile) as json_file:
                      ylabel =  "Time (ms)" if (m=="totalTimeSSD" or m=="totalTimeHDD") else "I/O (MB)",
                      xlabel = xLabel,
                      xlog = xlog,
-                     ylog  = ylog,
+                     ylog  = ylog if m != "recursionDepth" else False,
                      metric_fn = lambda s: getattr(s, m),
                      groupBy_fn = eval(groupBy_fn_) ,
                      select_fn = eval(select_fn_) ,
