@@ -1,6 +1,7 @@
 import math
 from Config import *
 
+
 class Join:
     def __init__(self, config, id = 0):
         self.config = config
@@ -13,6 +14,7 @@ class Join:
         self.freeMem = self.mem
         self.id = id
         self.stats_ = None
+        assert self.numOfPartitions <= self.mem
 
     def stats(self):
         if self.stats_ is None:
@@ -73,50 +75,69 @@ class Build:
         self.partitions.append(p)
 
     def run(self):
-        data_size = math.ceil(self.size / self.join.numOfPartitions)
-        memForpartition = math.floor((self.mem - self.join.spilledPartitions())
-                                      / (self.join.numOfPartitions - self.join.spilledPartitions()))
+        totalMem = self.mem
         totalSize = self.size
-        for pindex in range(self.join.numOfPartitions):
-           if totalSize == 0 :
-               p = Partition(pindex, memForpartition, 0)
-               self.addPartition(p)
-               continue
-           else:
-                p = Partition(pindex, memForpartition, data_size)
-                totalSize -= data_size
-                # Reading of base relations should not be counted. Only intermediate results.
-                #SeqR  occurs for the size of the memory given to this partition, after that we need to write to disk as memory is full which causes next reads to be separate seqR than current read.
-                if self.join.id != 0:
-                    remaining  = data_size
-                    if remaining > memForpartition:
-                        p.doSR(memForpartition)
-                        remaining -= memForpartition
-                        if remaining > 0:
-                            p.doSR(remaining)
-                        assert p.inMem == data_size
-
-                #writes to disk
-                if memForpartition < data_size :
+        id = 0
+        for i in range(self.join.numOfPartitions):
+            self.addPartition(Partition(i, 0))
+            # Reading of base relations should not be counted. Only intermediate results.
+            # SeqR  occurs for the size of the memory given to this partition, after that we need to write to disk as memory is full which causes next reads to be separate seqR than current read.
+        if self.join.id != 0:
+            self.partitions[0].doSR(totalSize)
+        while(totalSize > 0):
+            pindex = id % self.join.numOfPartitions
+            if totalMem > 0 and not self.join.spilledStatus[pindex]:
+                self.partitions[pindex].doInsert(1)
+                totalMem -=1
+                totalSize -=1
+            else:
+                #find victim
+                if self.partitions[pindex].size == 0:
+                    #spill biggest non-spilled partition
+                    max = 0
+                    pidMax = -1
+                    for p in self.partitions:
+                        if not self.join.spilledStatus(p.pid) and p.inMem > max:
+                            pidMax = p.pid
+                    assert pidMax >= 0
+                    p = self.partitions[pidMax]
+                else:
+                    p = self.partitions[pindex]
+                #spill or write
+                if self.join.spilledStatus[p.pid]:
+                    assert p.inMem == 1
+                    p.doRW(p.inMem)
+                    assert p.inMem == 0
+                    assert p.mem == 0
+                else:
+                    freed_mem =p.inMem - 1
+                    totalMem += freed_mem
+                    p.doSW(p.inMem)
+                    assert p.inMem == 0
+                    assert p.mem == 0
                     self.join.spill(p.pid)
-                    p.doSW(memForpartition)
-                    if data_size - memForpartition > 0:
-                        p.doRW(data_size - memForpartition)
-                    if p.inMem != 0:
-                        raise  Exception("p.InMem != 0 pid="+str(p.pid) +"inMem"+str(p.inMem)+str(self.join))
-                self.addPartition(p)
+                p.doInsert(1)
+                assert p.inMem == 1
+                assert p.mem == 1
+                totalSize -=1
+            id += 1
 
 
     def memoryUsed(self):
        size = 0
        for i in range(len(self.join.spilledStatus)):
            if not self.join.spilledStatus[i]:
-               size += self.partitions[i].size
+               size += self.partitions[i].inMem
        return size
 
 
     def close(self):
-        # for now just bring back partitions to memory
+       #write the leftover parts of each spilled partition to the disk
+        for p in self.partitions:
+            if self.join.spilledStatus[p.pid]:
+                assert p.inMem <=1
+                if p.inMem == 1:
+                    p.doRW(p.inMem)
         self.bringPartitionsBackinIfPossible()
 
     def bringPartitionsBackinIfPossible(self):
@@ -147,33 +168,31 @@ class Probe:
         return self.stats_
 
     def init(self):
-        dataSizeForEachPartition = math.ceil(self.size / self.parentJoin.numOfPartitions)
-        memForEachPartition = 1 if self.parentJoin.spilledPartitions() == 0 else 1+ math.floor(self.parentJoin.freeMem / self.parentJoin.spilledPartitions())
         totalSize = self.size
+        id = 0
+
         for i in range(self.parentJoin.numOfPartitions):
-            if totalSize == 0 or not self.parentJoin.isSpilled(i):
-                self.partitions.append(Partition(i, 0, 0))
+            self.partitions.append(Partition(i, 0))
+
+        # Reading of base relations should not be counted. Only intermediate results.
+        # SeqR  occurs for the size of the memory given to this partition, after that we need to write to disk as memory is full which causes next reads to be separate seqR than current read.
+        if self.parentJoin.id != 0:
+            self.partitions[0].doSR(totalSize)
+
+        while (totalSize > 0):
+            pindex = id % self.parentJoin.numOfPartitions
+            id += 1
+            totalSize -= 1
+            p = self.partitions[pindex]
+            #corresponding buildpartition is in memory
+            if not self.parentJoin.isSpilled(pindex):
+                p.size += 1
                 continue
             else:
-                totalSize -= dataSizeForEachPartition
-                self.partitions.append(Partition(i, memForEachPartition,
-                                                 dataSizeForEachPartition))
-                partition = self.partitions[i]
-                size = partition.size
-                if size - partition.mem > 0:
-                    self.partitions[i].doSW(partition.mem)
-                    size -= partition.mem
-                if size > 0:
-                    self.partitions[i].doRW(size)
-            # counting the seqR for reading intermediate results in
-                # SeqR  occurs for the size of the memory given to this partition, after that we need to write to disk as memory is full which causes next reads to be separate seqR than current read.
-                if self.parentJoin.id != 0:
-                    remaining = dataSizeForEachPartition
-                    while (remaining > partition.mem):
-                        partition.doSR(partition.mem)
-                        remaining -= partition.mem
-                    if remaining > 0:
-                        partition.doSR(remaining)
+                #build partition is spilled
+                p.doInsert(1)
+                p.doRW(1)
+
 
 
 
@@ -199,12 +218,12 @@ class Probe:
 class Stats:
     seekTime_HDD = 12 #ms
     rotational_HDD = 4.17 #ms
-    transferRate_HDD = 0.6 #MB/ms
+    transferRate_HDD = 1.92 # Frames/ms or 0.06MB/ms
 
-    seqR_SSD = 3 # MB/ms
-    seqW_SSD = 1.15 #MB/ms
-    #randomR_SSD = 360 #iopms
-    randomW_SSD = 280 #iopms
+    seqR_SSD = 96 #Frames/ms or  3 MB/ms
+    seqW_SSD = 36.8 # Frames/ms or 1.15 MB/ms
+    randomR_SSD = 360 #iopms
+    randomW_SSD = 35 #iopms(frame-based) or 280 iopms (4k-based) ==> calculation (280*4*1024)/32768
 
 
     def __init__(self, RW = 0, SW = 0, seqR = 0, seeks = 0, recursionDepth = 0, seqRSeeks=0, RWSeeks=0, SWSeeks=0):
@@ -243,15 +262,15 @@ class Stats:
                      self.recursionDepth, self.seqRSeeks + other.seqRSeeks, self.RWSeeks + other.RWSeeks, self.SWSeeks + other.SWSeeks)
 
     def __str__(self):
-        return (" SW(pages): %d\tRW: %d\tseqR: %d\tseeks: %d\ttotalTimeHDD(ms): %f \ttotalTimeHDD(ms): %f\ttotalIO: %d\ttotalW: %d\trecursionDepth: %d \tseqSeeks: %d \tRWSeeks: %d \tSWSeeks: %d"
+        return (" SW(pages): %d\tRW: %d\tseqR: %d\tseeks: %d\ttotalTimeHDD(ms): %f \ttotalTimeSSD(ms): %f\ttotalIO: %d\ttotalW: %d\trecursionDepth: %d \tseqSeeks: %d \tRWSeeks: %d \tSWSeeks: %d"
                 % (self.SW, self.RW, self.seqR, self.seeks, self.totalTimeHDD,self.totalTimeSSD, self.totalIO, self.totalW, self.recursionDepth, self.seqRSeeks, self.RWSeeks, self.SWSeeks))
 
 class Partition:
-    def __init__(self, pid, mem, size):
+    def __init__(self, pid, size):
         self.pid = pid
-        self.mem = mem
         self.size = size
         self.inMem = 0
+        self.mem = 0
         self.stats_ = Stats()
 
     def stats(self):
@@ -260,22 +279,28 @@ class Partition:
     def doRW(self, RW):  # randomwrite
         self.stats_.RW += int(RW)
         self.inMem = max(0,self.inMem - int(RW))
+        self.mem = max(0, self.mem - int(RW))
         self.stats_.seeks += int(RW)
         self.stats_.RWSeeks += int(RW)
 
     def doSW(self, SW):
         self.stats_.SW += int(SW)
         self.inMem = max( 0 ,self.inMem - int(SW))
+        self.mem = max(0, self.mem - int(SW))
         self.stats_.seeks += 1
         self.stats_.SWSeeks += 1
 
     def doSR(self,seqR): #for reading a whole partition in during build close
         self.stats_.seqR += int(seqR)
-        self.inMem += seqR
         self.stats_.seeks += 1
         self.stats_.seqRSeeks += 1
 
+    def doInsert(self,R):
+        self.mem += R
+        self.inMem += R
+        self.size += R
+
     def __str__(self):
-        return ("pid: " + str(self.pid) + " size: " + str(self.size) + " mem: " + str(self.mem)
+        return ("pid: " + str(self.pid) + " size: " + str(self.size) + " inMem: "+ str(self.inMem)
                 + " stats: \"" + str(self.stats_))
         

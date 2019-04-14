@@ -56,8 +56,8 @@ class Plot:
                 ys = self.fixYvalues(ys)
             allYs += ys
             xticks = [0]+S[g]
-            #plt.step(S[g], self.fixYvalues(ys), label = self.lineLabel_fn(g), marker = 'x', where="post")
-            plt.plot(S[g], ys, label=self.lineLabel_fn(g),alpha=0.6)
+            plt.step(S[g], self.fixYvalues(ys), label = self.lineLabel_fn(g), marker = 'x', where="post")
+            #plt.plot(S[g], ys, label=self.lineLabel_fn(g),alpha=0.6)
 
         plt.ylabel(self.ylabel)
         plt.xlabel(self.xlabel)
